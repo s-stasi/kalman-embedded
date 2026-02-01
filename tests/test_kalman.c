@@ -1,6 +1,6 @@
 #include <stdio.h>
 #define KALMAN_FILTER_IMPLEMENTATION
-#include "kalman_filter.h"
+#include "../kalman_filter.h"
 
 int main() {
     /* --- DATI DI TEST (Scenario: Pedale al 20% con rumore) --- */
