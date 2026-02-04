@@ -71,6 +71,7 @@ extern "C"
   void Kalman2DInit(KalmanFilter2D_t *kalman, float *F, float *H, float *Q, float *R, float *P, float offset1, float offset2);
   void Kalman2DPredict(KalmanFilter2D_t *kalman);
   void Kalman2DUpdate(KalmanFilter2D_t *kalman, float z1, float z2);
+  void Kalman2DUpdateVector(KalmanFilter2D_t *kalman, float *measurements);
 
 #ifdef __cplusplus
 }
@@ -202,6 +203,10 @@ void Kalman2DUpdate(KalmanFilter2D_t *kalman, float z1, float z2) {
 
     kalman->P[0] = p0_new; kalman->P[1] = p1_new;
     kalman->P[2] = p2_new; kalman->P[3] = p3_new;
+}
+
+void Kalman2DUpdateVector(KalmanFilter2D_t *kalman, float *measurements) {
+  Kalman2DUpdate(kalman, measurements[0], measurements[1]);
 }
 
 #endif // KALMAN_FILTER_IMPLEMENTATION
