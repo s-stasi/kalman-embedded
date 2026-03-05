@@ -79,6 +79,10 @@ extern "C"
 
 #endif // KALMAN_FILTER_H
 
+// Enable for testing
+// #define KALMAN_FILTER_IMPLEMENTATION
+//
+
 #ifdef KALMAN_FILTER_IMPLEMENTATION
 
 void Kalman1DInit(KalmanFilter1D_t *kalman, float q, float r, float p) {

@@ -1,0 +1,3 @@
+[submodule "lib/linear-algebra-embedded"]
+	path = lib/linear-algebra-embedded
+	url = https://github.com/s-stasi/linear-algebra-embedded.git
