@@ -23,10 +23,17 @@
 
 #ifndef KALMAN_FILTER_H
 #define KALMAN_FILTER_H
+#define KALMAN_FILTER_VERSION "1.0.0"
 
 #include <stdint.h>
 #include <string.h>
 #include <math.h>
+
+#define MATRIX_MATH_IMPLEMENTATION
+#include "lib/linear-algebra-embedded/matrix_math.h"
+
+#define VECTOR_MATH_IMPLEMENTATION
+#include "lib/linear-algebra-embedded/vector_math.h"
 
 #if defined(__GNUC__) || defined(__clang__)
 #define ALIGN16 __attribute__((aligned(16)))
