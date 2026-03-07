@@ -25,6 +25,13 @@
 #define KALMAN_FILTER_H
 #define KALMAN_FILTER_VERSION "1.0.0"
 
+// User should define the best allocator for their platform, default is malloc/free
+#ifndef KALMAN_MALLOC
+#include <stdlib.h>
+#define KALMAN_MALLOC malloc
+#define KALMAN_FREE free
+#endif
+
 #include <stdint.h>
 #include <string.h>
 #include <math.h>
@@ -41,44 +48,45 @@
 #define ALIGN16
 #endif
 
-typedef struct {
+typedef struct
+{
   float q, r, p;
   float state;
 } KalmanFilter1D_t;
 
 typedef struct
 {
-  float x[2]; // State position and velocity
-} KalmanState2D_t;
+  Matrix_t F; // Transition matrix
+  Matrix_t H; // Observation matrix
+  Matrix_t Q; // Process noise
+  Matrix_t R; // Sensor noise
+  Matrix_t P; // Error covariance
+  Matrix_t K; // Kalman gain
+  Matrix_t transpose_buffer;
+  Matrix_t mult_buffer;
+  Matrix_t S;
 
-typedef struct
-{
-  ALIGN16 float F[4]; // Transition matrix (2x2)
-  ALIGN16 float H[4]; // Observation matrix (2x2)
-  ALIGN16 float Q[4]; // Process noise (2x2)
-  ALIGN16 float R[4]; // Sensor noise (2x2)
-  ALIGN16 float P[4]; // Error covariance (2x2)
-  ALIGN16 float K[4]; // Kalman gain (2x2)
+  Vector_t state;
+  Vector_t state_buffer;
+  Vector_t y;
 
-  KalmanState2D_t state;
-
-  // Offset
-  float offset[2];
-} KalmanFilter2D_t;
+  uint8_t num_states;
+  uint8_t num_measurements;
+} KalmanFilter_t;
 
 #ifdef __cplusplus
 extern "C"
 {
 #endif
 
-  void Kalman1DInit(KalmanFilter1D_t *kalman, float q, float r, float p);
-  void Kalman1DPredict(KalmanFilter1D_t *kalman);
-  float Kalman1DUpdate(KalmanFilter1D_t *kalman, float z);
+  void kalman_1DInit(KalmanFilter1D_t *kalman, float q, float r, float p);
+  void kalman_1DPredict(KalmanFilter1D_t *kalman);
+  float kalman_1DUpdate(KalmanFilter1D_t *kalman, float z);
 
-  void Kalman2DInit(KalmanFilter2D_t *kalman, float *F, float *H, float *Q, float *R, float *P, float offset1, float offset2);
-  void Kalman2DPredict(KalmanFilter2D_t *kalman);
-  void Kalman2DUpdate(KalmanFilter2D_t *kalman, float z1, float z2);
-  void Kalman2DUpdateVector(KalmanFilter2D_t *kalman, float *measurements);
+  void kalman_init(KalmanFilter_t *kalman, uint8_t num_states, uint8_t num_measurements, float *F_init, float *H_init, float *Q_init, float *R_init, float *P_init);
+  void kalman_predict(KalmanFilter_t *kalman);
+  void kalman_update(KalmanFilter_t *kalman, Vector_t *updates);
+  void kalman_free(KalmanFilter_t *kalman);
 
 #ifdef __cplusplus
 }
@@ -92,18 +100,21 @@ extern "C"
 
 #ifdef KALMAN_FILTER_IMPLEMENTATION
 
-void Kalman1DInit(KalmanFilter1D_t *kalman, float q, float r, float p) {
+void kalman_1DInit(KalmanFilter1D_t *kalman, float q, float r, float p)
+{
   kalman->q = q;
   kalman->r = r;
   kalman->p = p;
   kalman->state = 0;
 }
 
-void Kalman1DPredict(KalmanFilter1D_t *kalman) {
+void kalman_1DPredict(KalmanFilter1D_t *kalman)
+{
   kalman->p = kalman->p + kalman->q;
 }
 
-float Kalman1DUpdate(KalmanFilter1D_t *kalman, float z) {
+float kalman_1DUpdate(KalmanFilter1D_t *kalman, float z)
+{
   float k = kalman->p / (kalman->p + kalman->r);
   kalman->state = kalman->state + k * (z - kalman->state);
   kalman->p = (1 - k) * kalman->p;
@@ -111,113 +122,191 @@ float Kalman1DUpdate(KalmanFilter1D_t *kalman, float z) {
   return kalman->state;
 }
 
-void Kalman2DInit(KalmanFilter2D_t *kalman, float *F, float *H, float *Q, float *R, float *P, float offset1, float offset2)
+void kalman_init(KalmanFilter_t *kalman, uint8_t num_states, uint8_t num_measurements,
+                float *F_init, float *H_init, float *Q_init, float *R_init, float *P_init)
 {
-  memcpy(kalman->F, F, sizeof(float) * 4);
-  memcpy(kalman->H, H, sizeof(float) * 4);
-  memcpy(kalman->Q, Q, sizeof(float) * 4);
-  memcpy(kalman->R, R, sizeof(float) * 4);
-  memcpy(kalman->P, P, sizeof(float) * 4);
+  kalman->num_states = num_states;
+  kalman->num_measurements = num_measurements;
 
-  memset(&kalman->state, 0, sizeof(float) * 2);
+  // 1. Inizializzazione Vettore di Stato (lunghezza N)
+  kalman->state.length = num_states;
+  kalman->state.data = (float *)KALMAN_MALLOC(num_states * sizeof(float));
+  memset(kalman->state.data, 0, num_states * sizeof(float));
 
-  kalman->K[0] = 0;
-  kalman->K[1] = 0;
-  kalman->K[2] = 0;
-  kalman->K[3] = 0;
+  kalman->state_buffer.length = num_states;
+  kalman->state_buffer.data = (float *)KALMAN_MALLOC(num_states * sizeof(float));
+  memset(kalman->state_buffer.data, 0, num_states * sizeof(float));
 
-  kalman->offset[0] = offset1;
-  kalman->offset[1] = offset2;
+  kalman->y.length = num_measurements;
+  kalman->y.data = (float *)KALMAN_MALLOC(num_measurements * sizeof(float));
+  memset(kalman->y.data, 0, num_measurements * sizeof(float));
+
+  // 2. Inizializzazione Matrici di Stato (N x N)
+  uint16_t n_sq_bytes = num_states * num_states * sizeof(float);
+  uint16_t n_max_bytes = 0;
+  if (num_measurements >= num_states) {
+    n_max_bytes = num_measurements * num_measurements * sizeof(float);
+    kalman->transpose_buffer.rows = num_measurements;
+    kalman->transpose_buffer.cols = num_measurements;
+  } else {
+    n_max_bytes = num_states * num_states * sizeof(float);
+    kalman->transpose_buffer.rows = num_states;
+    kalman->transpose_buffer.cols = num_states;
+  }
+
+  kalman->F.rows = num_states;
+  kalman->F.cols = num_states;
+  kalman->F.data = (float *)KALMAN_MALLOC(n_sq_bytes);
+  memcpy(kalman->F.data, F_init, n_sq_bytes);
+
+  kalman->transpose_buffer.data = (float *)KALMAN_MALLOC(n_max_bytes);
+  matrix_set_zero(&kalman->transpose_buffer);
+
+  kalman->P.rows = num_states;
+  kalman->P.cols = num_states;
+  kalman->P.data = (float *)KALMAN_MALLOC(n_sq_bytes);
+  memcpy(kalman->P.data, P_init, n_sq_bytes);
+
+  kalman->mult_buffer.rows = num_states;
+  kalman->mult_buffer.cols = num_states;
+  kalman->mult_buffer.data = (float *)KALMAN_MALLOC(n_max_bytes);
+  matrix_set_zero(&kalman->mult_buffer);
+
+  kalman->Q.rows = num_states;
+  kalman->Q.cols = num_states;
+  kalman->Q.data = (float *)KALMAN_MALLOC(n_sq_bytes);
+  memcpy(kalman->Q.data, Q_init, n_sq_bytes);
+
+  uint16_t n_hk_bytes = num_measurements * num_states * sizeof(float);
+  uint16_t n_r_bytes = num_measurements * num_measurements * sizeof(float);
+
+  kalman->H.rows = num_measurements;
+  kalman->H.cols = num_states;
+  kalman->H.data = (float *)KALMAN_MALLOC(n_hk_bytes);
+  memcpy(kalman->H.data, H_init, n_hk_bytes);
+
+  kalman->R.rows = num_measurements;
+  kalman->R.cols = num_measurements;
+  kalman->R.data = (float *)KALMAN_MALLOC(n_r_bytes);
+  memcpy(kalman->R.data, R_init, n_r_bytes);
+  
+  kalman->K.rows = num_states;
+  kalman->K.cols = num_measurements;
+  kalman->K.data = (float *)KALMAN_MALLOC(n_hk_bytes);
+  matrix_set_zero(&kalman->K);
+  
+  kalman->S.rows = num_measurements;
+  kalman->S.cols = num_measurements;
+  kalman->S.data = (float *)KALMAN_MALLOC(n_r_bytes);
+  matrix_set_zero(&kalman->S);
 }
 
-void Kalman2DPredict(KalmanFilter2D_t *kalman)
+void kalman_predict(KalmanFilter_t *kalman)
 {
   // x = F * x
-  float x0 = kalman->F[0] * kalman->state.x[0] + kalman->F[1] * kalman->state.x[1];
-  float x1 = kalman->F[2] * kalman->state.x[0] + kalman->F[3] * kalman->state.x[1];
-  kalman->state.x[0] = x0;
-  kalman->state.x[1] = x1;
+  matrix_multiply_vector(&kalman->F, &kalman->state, &kalman->state_buffer);
+  vector_copy(&kalman->state_buffer, &kalman->state);
 
   // P = F * P * F^T + Q
-  float m0 = kalman->F[0] * kalman->P[0] + kalman->F[1] * kalman->P[2];
-  float m1 = kalman->F[0] * kalman->P[1] + kalman->F[1] * kalman->P[3];
-  float m2 = kalman->F[2] * kalman->P[0] + kalman->F[3] * kalman->P[2];
-  float m3 = kalman->F[2] * kalman->P[1] + kalman->F[3] * kalman->P[3];
-
-  // (F * P) * F^T + Q
-  // [F0, F2, F1, F3]
-  kalman->P[0] = m0 * kalman->F[0] + m1 * kalman->F[1] + kalman->Q[0];
-  kalman->P[1] = m0 * kalman->F[2] + m1 * kalman->F[3] + kalman->Q[1];
-  kalman->P[2] = m2 * kalman->F[0] + m3 * kalman->F[1] + kalman->Q[2];
-  kalman->P[3] = m2 * kalman->F[2] + m3 * kalman->F[3] + kalman->Q[3];
+  kalman->transpose_buffer.rows = kalman->num_states;
+  kalman->transpose_buffer.cols = kalman->num_states;
+  matrix_transpose(&kalman->F, &kalman->transpose_buffer);
+  matrix_multiply(&kalman->F, &kalman->P, &kalman->mult_buffer);
+  matrix_multiply(&kalman->mult_buffer, &kalman->transpose_buffer, &kalman->P);
+  matrix_add(&kalman->P, &kalman->Q, &kalman->mult_buffer);
+  matrix_copy(&kalman->mult_buffer, &kalman->P);
 }
 
-void Kalman2DUpdate(KalmanFilter2D_t *kalman, float z1, float z2) {
-    // 1. Innovazione y = z - (H * x + offset)
-    float hxo1 = kalman->H[0] * kalman->state.x[0] + kalman->H[1] * kalman->state.x[1] + kalman->offset[0];
-    float hxo2 = kalman->H[2] * kalman->state.x[0] + kalman->H[3] * kalman->state.x[1] + kalman->offset[1];
-    float y1 = z1 - hxo1;
-    float y2 = z2 - hxo2;
+void kalman_update(KalmanFilter_t *kalman, Vector_t *updates){
+  // 1. Innovazione y = z - (H * x)
+  Vector_t vector_buffer = {
+    .length = kalman->H.rows,
+    .data = (float *)kalman->mult_buffer.data
+  };
 
-    // 2. S = H * P * H^T + R
-    // Passo 1: M = H * P (Matrice temporanea 2x2)
-    float m0 = kalman->H[0] * kalman->P[0] + kalman->H[1] * kalman->P[2];
-    float m1 = kalman->H[0] * kalman->P[1] + kalman->H[1] * kalman->P[3];
-    float m2 = kalman->H[2] * kalman->P[0] + kalman->H[3] * kalman->P[2];
-    float m3 = kalman->H[2] * kalman->P[1] + kalman->H[3] * kalman->P[3];
+  matrix_multiply_vector(&kalman->H, &kalman->state, &vector_buffer);
+  vector_subtract(updates, &vector_buffer, &kalman->y);
+  
+  // 2. S = H * P * H^T + R
+  kalman->transpose_buffer.rows = kalman->num_states;
+  kalman->transpose_buffer.cols = kalman->num_measurements;
+  // M = H * P (Matrice temporanea 2x2)
+  matrix_multiply(&kalman->H, &kalman->P, &kalman->mult_buffer);
+  // H^T
+  matrix_transpose(&kalman->H, &kalman->transpose_buffer);
+  // M * H^T
+  matrix_multiply(&kalman->mult_buffer, &kalman->transpose_buffer, &kalman->S);
+  // S = S + R
+  kalman->mult_buffer.rows = kalman->S.rows;
+  kalman->mult_buffer.cols = kalman->S.cols;
+  matrix_add(&kalman->S, &kalman->R, &kalman->mult_buffer);
+  matrix_copy(&kalman->mult_buffer, &kalman->S);
 
-    // Passo 2: S = M * H^T + R
-    float s0 = m0 * kalman->H[0] + m1 * kalman->H[1] + kalman->R[0];
-    float s1 = m0 * kalman->H[2] + m1 * kalman->H[3] + kalman->R[1];
-    float s2 = m2 * kalman->H[0] + m3 * kalman->H[1] + kalman->R[2];
-    float s3 = m2 * kalman->H[2] + m3 * kalman->H[3] + kalman->R[3];
+  // K = P * H^T * S^-1
+  // H^T (N x M)
+  kalman->transpose_buffer.rows = kalman->num_states;
+  kalman->transpose_buffer.cols = kalman->num_measurements;
+  matrix_transpose(&kalman->H, &kalman->transpose_buffer);
 
-    // 3. Inversione di S
-    float detS = s0 * s3 - s1 * s2;
-    if (detS > -1e-6f && detS < 1e-6f) return; // Protezione divisione per zero
-    float invDet = 1.0f / detS;
+  // P * H^T
+  matrix_multiply(&kalman->P, &kalman->transpose_buffer, &kalman->K);
 
-    float invS0 =  s3 * invDet;
-    float invS1 = -s1 * invDet;
-    float invS2 = -s2 * invDet;
-    float invS3 =  s0 * invDet;
+  // S^-1
+  kalman->transpose_buffer.rows = kalman->num_measurements;
+  kalman->transpose_buffer.cols = kalman->num_measurements;
+  kalman->mult_buffer.rows = kalman->num_measurements;
+  kalman->mult_buffer.cols = kalman->num_measurements;
+  matrix_inverse(&kalman->S, &kalman->transpose_buffer, &kalman->mult_buffer);
 
-    // 4. Guadagno di Kalman K = P * H^T * S^-1
-    // Passo 1: N = P * H^T
-    float n0 = kalman->P[0] * kalman->H[0] + kalman->P[1] * kalman->H[1];
-    float n1 = kalman->P[0] * kalman->H[2] + kalman->P[1] * kalman->H[3];
-    float n2 = kalman->P[2] * kalman->H[0] + kalman->P[3] * kalman->H[1];
-    float n3 = kalman->P[2] * kalman->H[2] + kalman->P[3] * kalman->H[3];
+  // K = (P * H^T) * S^-1
+  kalman->mult_buffer.rows = kalman->num_states;
+  kalman->mult_buffer.cols = kalman->num_measurements;
+  matrix_multiply(&kalman->K, &kalman->transpose_buffer, &kalman->mult_buffer);
+  matrix_copy(&kalman->mult_buffer, &kalman->K);
 
-    // Passo 2: K = N * S^-1
-    kalman->K[0] = n0 * invS0 + n1 * invS2;
-    kalman->K[1] = n0 * invS1 + n1 * invS3;
-    kalman->K[2] = n2 * invS0 + n3 * invS2;
-    kalman->K[3] = n2 * invS1 + n3 * invS3;
+  // x = x + K * y
+  vector_buffer.length = kalman->num_states;
+  matrix_multiply_vector(&kalman->K, &kalman->y, &vector_buffer);
+  vector_add(&kalman->state, &vector_buffer, &kalman->state_buffer);
+  vector_copy(&kalman->state_buffer, &kalman->state);
 
-    // 5. Aggiornamento Stato x = x + K * y
-    kalman->state.x[0] += kalman->K[0] * y1 + kalman->K[1] * y2;
-    kalman->state.x[1] += kalman->K[2] * y1 + kalman->K[3] * y2;
+  // P = (I - K * H) * P --> P = P - (K * H * P)
+  // H * P (Result: M x N)
+  kalman->mult_buffer.rows = kalman->num_measurements;
+  kalman->mult_buffer.cols = kalman->num_states;
+  matrix_multiply(&kalman->H, &kalman->P, &kalman->mult_buffer);
 
-    // 6. Aggiornamento Covarianza P = (I - K * H) * P
-    // IKH = (I - K * H)
-    float ikh0 = 1.0f - (kalman->K[0] * kalman->H[0] + kalman->K[1] * kalman->H[2]);
-    float ikh1 = - (kalman->K[0] * kalman->H[1] + kalman->K[1] * kalman->H[3]);
-    float ikh2 = - (kalman->K[2] * kalman->H[0] + kalman->K[3] * kalman->H[2]);
-    float ikh3 = 1.0f - (kalman->K[2] * kalman->H[1] + kalman->K[3] * kalman->H[3]);
+  // K * (H * P) (Result: N x N)
+  kalman->transpose_buffer.rows = kalman->num_states;
+  kalman->transpose_buffer.cols = kalman->num_states;
+  matrix_multiply(&kalman->K, &kalman->mult_buffer, &kalman->transpose_buffer);
 
-    // P = IKH * P
-    float p0_new = ikh0 * kalman->P[0] + ikh1 * kalman->P[2];
-    float p1_new = ikh0 * kalman->P[1] + ikh1 * kalman->P[3];
-    float p2_new = ikh2 * kalman->P[0] + ikh3 * kalman->P[2];
-    float p3_new = ikh2 * kalman->P[1] + ikh3 * kalman->P[3];
-
-    kalman->P[0] = p0_new; kalman->P[1] = p1_new;
-    kalman->P[2] = p2_new; kalman->P[3] = p3_new;
+  // P - [K * (H * P)] (Result: N x N)
+  kalman->mult_buffer.rows = kalman->num_states;
+  kalman->mult_buffer.cols = kalman->num_states;
+  matrix_subtract(&kalman->P, &kalman->transpose_buffer, &kalman->mult_buffer);
+  matrix_copy(&kalman->mult_buffer, &kalman->P);
 }
 
-void Kalman2DUpdateVector(KalmanFilter2D_t *kalman, float *measurements) {
-  Kalman2DUpdate(kalman, measurements[0], measurements[1]);
-}
+void kalman_free(KalmanFilter_t *kalman){
+  if (!kalman) return;
 
+  // Libera i vettori
+  KALMAN_FREE(kalman->state.data);
+  KALMAN_FREE(kalman->state_buffer.data);
+  KALMAN_FREE(kalman->y.data);
+
+  // Libera le matrici N x N e i buffer temporanei
+  KALMAN_FREE(kalman->F.data);
+  KALMAN_FREE(kalman->P.data);
+  KALMAN_FREE(kalman->Q.data);
+  KALMAN_FREE(kalman->transpose_buffer.data);
+  KALMAN_FREE(kalman->mult_buffer.data);
+
+  // Libera le matrici M x N, M x M e N x M
+  KALMAN_FREE(kalman->H.data);
+  KALMAN_FREE(kalman->R.data);
+  KALMAN_FREE(kalman->K.data);
+  KALMAN_FREE(kalman->S.data);
+}
 #endif // KALMAN_FILTER_IMPLEMENTATION

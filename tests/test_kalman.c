@@ -11,8 +11,8 @@ int main() {
     /* --- CONFIGURAZIONE FILTRI 1D --- */
     KalmanFilter1D_t k1d_acc1;
     KalmanFilter1D_t k1d_acc2;
-    Kalman1DInit(&k1d_acc1, 0.1f, 25.0f, 1.0f);
-    Kalman1DInit(&k1d_acc2, 0.1f, 25.0f, 1.0f);
+    kalman_1DInit(&k1d_acc1, 0.1f, 25.0f, 1.0f);
+    kalman_1DInit(&k1d_acc2, 0.1f, 25.0f, 1.0f);
     k1d_acc1.state = 196.0f; // Inizializzo al primo valore
     k1d_acc2.state = 3946.0f;
 
@@ -35,10 +35,10 @@ int main() {
 
     for (int i = 0; i < steps; i++) {
         /* Update 1D */
-        Kalman1DPredict(&k1d_acc1);
-        Kalman1DUpdate(&k1d_acc1, raw_acc1[i]);
-        Kalman1DPredict(&k1d_acc2);
-        Kalman1DUpdate(&k1d_acc2, raw_acc2[i]);
+        kalman_1DPredict(&k1d_acc1);
+        kalman_1DUpdate(&k1d_acc1, raw_acc1[i]);
+        kalman_1DPredict(&k1d_acc2);
+        kalman_1DUpdate(&k1d_acc2, raw_acc2[i]);
 
         /* Update 2D */
         Kalman2DPredict(&k2d);
