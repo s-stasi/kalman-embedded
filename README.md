@@ -1,82 +1,95 @@
 # kalman-embedded
 
-A high-performance, header-only Kalman Filter library specifically designed for embedded systems (ARM Cortex-M, ESP32, etc.). It features both a lightweight 1D implementation and a robust 2D implementation with Sensor Fusion, optimized for redundant sensors like dual-potentiometers (APPS) or IMUs.
+A high-performance Kalman Filter library specifically designed for embedded systems (ARM Cortex-M, ESP32, etc.). It features both a lightweight 1D implementation and a robust N-dimensional implementation with Sensor Fusion, relying on a custom, bare-metal matrix/vector math library.
 
 ## Features
 
-* **Header-only**: Easy integration, requires only `kalman_filter.h`.
+* **Standard C Architecture**: Clean separation between interface (`.h`) and implementation (`.c`) for scalable projects.
 * **Dual Mode**:
-* **1D Scalar**: Ultra-lightweight, minimal CPU/RAM footprint.
-* **2D Matrix**: State-space model (position/velocity) with Sensor Fusion support.
+  * **1D Scalar**: Ultra-lightweight, minimal CPU/RAM footprint.
+  * **N-Dimensional Matrix**: State-space model capable of handling multiple states and redundant sensors dynamically.
+* **Real-time Safe**: Zero dynamic allocation during the control loop. `malloc` (or your custom allocator) is strictly used only once during the initialization phase (`kalman_init`).
+* **Memory Aliasing Protection**: Smart internal buffer management to strictly avoid memory aliasing issues during matrix operations.
 
-* **SIMD Ready**: Data structures are aligned to 16-byte boundaries to facilitate ARM CMSIS-DSP or NEON optimizations.
-* **Zero Dynamic Allocation**: No `malloc` usage; completely static and deterministic memory management.
+## Integration
 
-## Installation
+The library uses a standard structure. To use it in your project:
 
-Copy `kalman_filter.h` into your project source tree. To include the implementation, define `KALMAN_FILTER_IMPLEMENTATION` in **one** C file before including the header:
-
-```c
-#define KALMAN_FILTER_IMPLEMENTATION
-#include "kalman_filter.h"
-
-```
-
-In other files where you need to access the filter types or functions, simply include the header:
+1. Add the `include/` and `lib/linear-algebra-embedded/include/` directories to your compiler's include path.
+2. Compile and link the source files:
+   * `src/kalman_filter.c`
+   * `lib/linear-algebra-embedded/src/matrix_math.c`
+   * `lib/linear-algebra-embedded/src/vector_math.c`
 
 ```c
 #include "kalman_filter.h"
 
 ```
 
-## Usage Example: Dual APPS Sensor Fusion
+## Usage Example (N-Dimensional Filter)
 
-This library is suitable for Formula Student APPS (Accelerator Pedal Position Sensor) plausibility checks. It handles inverse-slope sensors (e.g., Sensor 1: 0V-2.4V, Sensor 2: 5V-2.6V) using the 2D Sensor Fusion model to estimate position and velocity.
+Example of estimating Position and Velocity ($N=2$) using a single noisy position sensor ($M=1$).
 
 ### Initialization
 
 ```c
-// Define system matrices
-// State Transition (F): Position = Position + Velocity * dt
-float dt = 0.01f; // 10ms loop
-float F[4] = {1.0f, dt, 0.0f, 1.0f};
+#include "kalman_filter.h"
 
-// Observation Matrix (H): Maps state to sensor voltage
-// Example slopes: Sens1 = 580*Pos, Sens2 = -570*Pos
-float H[4] = {580.0f, 0.0f, -570.0f, 0.0f};
+// Define system parameters
+uint8_t num_states = 2;       // Position, Velocity
+uint8_t num_measurements = 1; // Position sensor only
+float dt = 0.01f;             // 10ms loop
+
+// State Transition (F): Position = Position + Velocity * dt
+float F[4] = {1.0f, dt, 
+              0.0f, 1.0f};
+
+// Observation Matrix (H): Maps state to sensor reading
+float H[2] = {1.0f, 0.0f};
 
 // Noise Matrices
-float Q[4] = {0.001f, 0.0f, 0.0f, 0.001f}; // Process noise
-float R[4] = {25.0f, 0.0f, 0.0f, 25.0f};   // Sensor noise (Variance)
-float P[4] = {1.0f, 0.0f, 0.0f, 1.0f};     // Initial covariance
+float Q[4] = {0.01f, 0.0f, 
+              0.0f, 0.01f}; // Process noise
+float R[1] = {4.0f};        // Sensor noise (Variance)
+float P[4] = {100.0f, 0.0f, 
+              0.0f, 100.0f}; // Initial covariance
 
-KalmanFilter2D_t k2d;
+KalmanFilter_t kf;
 
-// Initialize with offsets for the sensors
-Kalman2DInit(&k2d, F, H, Q, R, P, 80.0f, 4060.0f);
+// Initialize the filter (allocates required buffers)
+kalman_init(&kf, num_states, num_measurements, F, H, Q, R, P);
 
 ```
 
 ### Main Loop
 
 ```c
+// Allocate a vector for our measurements
+float sensor_data[1];
+Vector_t z = {
+    .length = num_measurements,
+    .data = sensor_data
+};
+
 while(1) {
-    // Acquire raw ADC values
-    float z1 = Read_ADC(CH1);
-    float z2 = Read_ADC(CH2);
+    // 1. Acquire raw sensor values
+    z.data[0] = Read_Sensor();
     
-    // Prediction Step
-    Kalman2DPredict(&k2d);
+    // 2. Prediction Step
+    kalman_predict(&kf);
     
-    // Update Step (Fusion)
-    Kalman2DUpdate(&k2d, z1, z2);
+    // 3. Update Step
+    kalman_update(&kf, &z);
     
-    // Retrieve estimated state
-    float estimated_position = k2d.state.x[0];
-    float estimated_velocity = k2d.state.x[1];
+    // 4. Retrieve estimated state
+    float estimated_position = kf.state.data[0];
+    float estimated_velocity = kf.state.data[1];
     
-    // Use estimated_position for torque command
+    // Use estimates...
 }
+
+// If the filter is destroyed, free the memory
+// kalman_free(&kf);
 
 ```
 
@@ -88,7 +101,7 @@ The library implements the standard discrete Kalman Filter equations.
 
 Project the state ahead:
 
-$$\hat{x}_{k} = F \hat{x}_{k-1}$$
+$$x_{k} = F x_{k-1}$$
 
 Project the error covariance ahead:
 
@@ -100,9 +113,9 @@ Compute the Kalman Gain:
 
 $$K_k = P_k H^T (H P_k H^T + R)^{-1}$$
 
-Update the estimate via measurement :
+Update the estimate via measurement:
 
-$$\hat{x}_k = \hat{x}_k + K_k (z_k - H \hat{x}_k)$$
+$$x_k = x_k + K_k (z_k - H x_k)$$
 
 Update the error covariance:
 
