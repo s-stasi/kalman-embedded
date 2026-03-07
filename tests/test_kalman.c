@@ -1,54 +1,96 @@
 #include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+
+#define MATRIX_MATH_IMPLEMENTATION
+#define VECTOR_MATH_IMPLEMENTATION
 #define KALMAN_FILTER_IMPLEMENTATION
-#include "../kalman_filter.h"
+#include "../include/kalman_filter.h"
 
-int main() {
-    /* --- DATI DI TEST (Scenario: Pedale al 20% con rumore) --- */
-    float raw_acc1[] = {196.0f, 210.0f, 190.0f, 205.0f, 198.0f};
-    float raw_acc2[] = {3946.0f, 3930.0f, 3960.0f, 3940.0f, 3950.0f};
-    int steps = 5;
+// Helper function to generate pseudo-random noise between -range and +range
+float generate_noise(float range)
+{
+  return (((float)rand() / (float)RAND_MAX) * 2.0f - 1.0f) * range;
+}
 
-    /* --- CONFIGURAZIONE FILTRI 1D --- */
-    KalmanFilter1D_t k1d_acc1;
-    KalmanFilter1D_t k1d_acc2;
-    kalman_1DInit(&k1d_acc1, 0.1f, 25.0f, 1.0f);
-    kalman_1DInit(&k1d_acc2, 0.1f, 25.0f, 1.0f);
-    k1d_acc1.state = 196.0f; // Inizializzo al primo valore
-    k1d_acc2.state = 3946.0f;
+int main()
+{
+  // Initialize random seed
+  srand((unsigned int)time(NULL));
 
-    /* --- CONFIGURAZIONE FILTRO 2D --- */
-    KalmanFilter2D_t k2d;
-    float dt = 0.01f;
-    float F[4] = {1.0f, dt, 0.0f, 1.0f};
-    float H[4] = {580.0f, 0.0f, -570.0f, 0.0f}; // Pendenze mappate su 0.0-1.0
-    float Q[4] = {0.001f, 0.0f, 0.0f, 0.001f};
-    float R[4] = {25.0f, 0.0f, 0.0f, 25.0f};
-    float P[4] = {1.0f, 0.0f, 0.0f, 1.0f};
-    
-    Kalman2DInit(&k2d, F, H, Q, R, P, 80.0f, 4060.0f);
-    k2d.state.x[0] = 0.2f; // Inizializzo al 20%
+  KalmanFilter_t kf;
+  uint8_t num_states = 2;       // Position, Velocity
+  uint8_t num_measurements = 1; // Only position sensor
 
-    printf("Test Comparison: 1D vs 2D Sensor Fusion\n");
-    printf("------------------------------------------------------------------\n");
-    printf("Step | Raw1  | Raw2  | 1D-Acc1 | 1D-Acc2 | 2D-Pos(%%) | 2D-Vel\n");
-    printf("------------------------------------------------------------------\n");
+  float dt = 0.1f; // Time step (10 Hz)
 
-    for (int i = 0; i < steps; i++) {
-        /* Update 1D */
-        kalman_1DPredict(&k1d_acc1);
-        kalman_1DUpdate(&k1d_acc1, raw_acc1[i]);
-        kalman_1DPredict(&k1d_acc2);
-        kalman_1DUpdate(&k1d_acc2, raw_acc2[i]);
+  // 1. Transition Matrix F (Kinematic model: p = p + v*dt, v = v)
+  float F_init[4] = {
+      1.0f, dt,
+      0.0f, 1.0f};
 
-        /* Update 2D */
-        Kalman2DPredict(&k2d);
-        Kalman2DUpdate(&k2d, raw_acc1[i], raw_acc2[i]);
+  // 2. Observation Matrix H (We only measure position, so 1 for pos, 0 for vel)
+  float H_init[2] = {
+      1.0f, 0.0f};
 
-        printf(" %d   | %.0f | %.0f | %7.2f | %7.2f | %8.2f%% | %8.4f\n",
-               i, raw_acc1[i], raw_acc2[i], 
-               k1d_acc1.state, k1d_acc2.state,
-               k2d.state.x[0] * 100.0f, k2d.state.x[1]);
-    }
+  // 3. Process Noise Covariance Q (Small uncertainty in our kinematic model)
+  float Q_init[4] = {
+      0.01f, 0.0f,
+      0.0f, 0.01f};
 
-    return 0;
+  // 4. Measurement Noise Covariance R (Variance of our noisy sensor)
+  // We expect noise around +/- 2.0 meters, so variance is roughly 4.0
+  float R_init[1] = {
+      4.0f};
+
+  // 5. Initial Error Covariance P (We don't trust our initial state much)
+  float P_init[4] = {
+      1.0f, 0.0f,
+      0.0f, 1.0f};
+
+  // Initialize the filter
+  kalman_init(&kf, num_states, num_measurements, F_init, H_init, Q_init, R_init, P_init);
+
+  // Simulation variables
+  float true_position = 0.0f;
+  float true_velocity = 5.0f; // Moving at 5 m/s
+
+  // Allocate a vector for our measurements
+  Vector_t z;
+  z.length = 1;
+  z.data = (float *)malloc(1 * sizeof(float));
+
+  printf("Time,True_Position,Noisy_Measurement,Estimated_Position,Estimated_Velocity\n");
+
+  // Run simulation for 50 steps
+  for (int step = 0; step < 50; step++)
+  {
+    float time_sec = step * dt;
+
+    // --- 1. SIMULATE THE REAL WORLD ---
+    true_position += true_velocity * dt;
+
+    // Sensor reading: true position + random noise (+/- 2.0m)
+    float sensor_noise = generate_noise(2.0f);
+    z.data[0] = true_position + sensor_noise;
+
+    // --- 2. KALMAN FILTER ALGORITHM ---
+    kalman_predict(&kf);
+    kalman_update(&kf, &z);
+
+    // --- 3. LOG RESULTS ---
+    printf("%.1f,%.3f,%.3f,%.3f,%.3f\n",
+           time_sec,
+           true_position,
+           z.data[0],
+           kf.state.data[0], // Estimated Position
+           kf.state.data[1]  // Estimated Velocity
+    );
+  }
+
+  // Clean up memory
+  free(z.data);
+  kalman_free(&kf);
+
+  return 0;
 }
