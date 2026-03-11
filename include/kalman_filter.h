@@ -32,6 +32,10 @@
 #define KALMAN_FREE free
 #endif
 
+#ifndef KALMAN_QUICKACCESS_CODE
+#define KALMAN_QUICKACCESS_CODE(funct) funct
+#endif
+
 #include <stdint.h>
 #include <string.h>
 #include <math.h>
@@ -73,14 +77,14 @@ extern "C"
 {
 #endif
 
-  void kalman_1DInit(KalmanFilter1D_t *kalman, float q, float r, float p);
-  void kalman_1DPredict(KalmanFilter1D_t *kalman);
-  float kalman_1DUpdate(KalmanFilter1D_t *kalman, float z);
+  KALMAN_QUICKACCESS_CODE(void kalman_1DInit(KalmanFilter1D_t *kalman, float q, float r, float p));
+  KALMAN_QUICKACCESS_CODE(void kalman_1DPredict(KalmanFilter1D_t *kalman));
+  KALMAN_QUICKACCESS_CODE(float kalman_1DUpdate(KalmanFilter1D_t *kalman, float z));
 
-  void kalman_init(KalmanFilter_t *kalman, uint8_t num_states, uint8_t num_measurements, float *F_init, float *H_init, float *Q_init, float *R_init, float *P_init);
-  void kalman_predict(KalmanFilter_t *kalman);
-  void kalman_update(KalmanFilter_t *kalman, Vector_t *updates);
-  void kalman_free(KalmanFilter_t *kalman);
+  KALMAN_QUICKACCESS_CODE(void kalman_init(KalmanFilter_t *kalman, uint8_t num_states, uint8_t num_measurements, float *F_init, float *H_init, float *Q_init, float *R_init, float *P_init));
+  KALMAN_QUICKACCESS_CODE(void kalman_predict(KalmanFilter_t *kalman));
+  KALMAN_QUICKACCESS_CODE(void kalman_update(KalmanFilter_t *kalman, Vector_t *updates));
+  KALMAN_QUICKACCESS_CODE(void kalman_free(KalmanFilter_t *kalman));
 
 #ifdef __cplusplus
 }

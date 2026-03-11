@@ -1,6 +1,6 @@
 #include "../include/kalman_filter.h"
 
-void kalman_1DInit(KalmanFilter1D_t *kalman, float q, float r, float p)
+KALMAN_QUICKACCESS_CODE(void kalman_1DInit(KalmanFilter1D_t *kalman, float q, float r, float p))
 {
   kalman->q = q;
   kalman->r = r;
@@ -8,12 +8,12 @@ void kalman_1DInit(KalmanFilter1D_t *kalman, float q, float r, float p)
   kalman->state = 0;
 }
 
-void kalman_1DPredict(KalmanFilter1D_t *kalman)
+KALMAN_QUICKACCESS_CODE(void kalman_1DPredict(KalmanFilter1D_t *kalman))
 {
   kalman->p = kalman->p + kalman->q;
 }
 
-float kalman_1DUpdate(KalmanFilter1D_t *kalman, float z)
+KALMAN_QUICKACCESS_CODE(float kalman_1DUpdate(KalmanFilter1D_t *kalman, float z))
 {
   float k = kalman->p / (kalman->p + kalman->r);
   kalman->state = kalman->state + k * (z - kalman->state);
@@ -22,8 +22,8 @@ float kalman_1DUpdate(KalmanFilter1D_t *kalman, float z)
   return kalman->state;
 }
 
-void kalman_init(KalmanFilter_t *kalman, uint8_t num_states, uint8_t num_measurements,
-                float *F_init, float *H_init, float *Q_init, float *R_init, float *P_init)
+KALMAN_QUICKACCESS_CODE(void kalman_init(KalmanFilter_t *kalman, uint8_t num_states, uint8_t num_measurements,
+                float *F_init, float *H_init, float *Q_init, float *R_init, float *P_init))
 {
   kalman->num_states = num_states;
   kalman->num_measurements = num_measurements;
@@ -101,7 +101,7 @@ void kalman_init(KalmanFilter_t *kalman, uint8_t num_states, uint8_t num_measure
   matrix_set_zero(&kalman->S);
 }
 
-void kalman_predict(KalmanFilter_t *kalman)
+KALMAN_QUICKACCESS_CODE(void kalman_predict(KalmanFilter_t *kalman))
 {
   // x = F * x
   matrix_multiply_vector(&kalman->F, &kalman->state, &kalman->state_buffer);
@@ -117,7 +117,8 @@ void kalman_predict(KalmanFilter_t *kalman)
   matrix_copy(&kalman->mult_buffer, &kalman->P);
 }
 
-void kalman_update(KalmanFilter_t *kalman, Vector_t *updates){
+KALMAN_QUICKACCESS_CODE(void kalman_update(KalmanFilter_t *kalman, Vector_t *updates))
+{
   // 1. Innovazione y = z - (H * x)
   Vector_t vector_buffer = {
     .length = kalman->H.rows,
@@ -188,7 +189,8 @@ void kalman_update(KalmanFilter_t *kalman, Vector_t *updates){
   matrix_copy(&kalman->mult_buffer, &kalman->P);
 }
 
-void kalman_free(KalmanFilter_t *kalman){
+KALMAN_QUICKACCESS_CODE(void kalman_free(KalmanFilter_t *kalman))
+{
   if (!kalman) return;
 
   // Libera i vettori
